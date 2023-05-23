@@ -1,15 +1,122 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <regex.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "common.h"
+#include "gdbserver.h"
+
 #define BUFFER_SIZE 1024
 
 static bool gdb_accept_tcp(int gdb_fd);
 static int gdbserver_open_port(int port);
 static void gdb_accept_loop(int client_fd);
+static unsigned char computeChecksum(const char *packet);
+static void gdb_reply(int client_fd, Pack_match *pack_recv);
+
+typedef void (*handle)(void *params);
+
+static unsigned char computeChecksum(const char *packet) {
+  size_t len = strlen(packet);
+  unsigned char sum = 0;
+  for (size_t i = 0; i < len; i++) {
+    sum += packet[i];
+  }
+  return sum & 0xFF;
+}
+
+static Pack_match *gdb_match(int client_fd, const char *buf, int size) {
+  if (buf[0] == '-') {
+    gdb_reply(client_fd, NULL);
+  } else if (buf[0] == '+') {
+    return NULL;
+  } else if (buf[0] == '$') {
+    regex_t regex;
+    regcomp(&regex, "^\\$([^#]*)#([0-9a-zA-Z]{2})$", REG_EXTENDED);
+
+    regmatch_t match[3];
+
+    if (regexec(&regex, buf, 3, match, 0) == 0) {
+
+      Pack_match *pack_recv = (Pack_match *)malloc(sizeof(Pack_match));
+      pack_recv->str = malloc(match[1].rm_eo - match[1].rm_so + 1);
+      memcpy(pack_recv->str, buf + match[1].rm_so,
+             match[1].rm_eo - match[1].rm_so);
+      pack_recv->str[match[1].rm_eo - match[1].rm_so] = '\0';
+
+      sscanf(buf + match[2].rm_so, "%2hhx", &(pack_recv->checksum));
+
+      Log("checksum: %x, Str: %s", pack_recv->checksum, pack_recv->str);
+
+      if (pack_recv->checksum == computeChecksum(pack_recv->str)) {
+        return pack_recv;
+      } else {
+        free(pack_recv->str);
+        free(pack_recv);
+        return NULL;
+      }
+    } else {
+      // 匹配失败
+      send(client_fd, "-", 1, 0);
+      return NULL;
+    }
+  }
+
+  return NULL;
+}
+
+static void generateReply(const char *packet, char *reply) {
+  unsigned char checksum = computeChecksum(packet);
+  sprintf(reply, "$%s#%02x", packet, checksum);
+}
+
+static void gdb_reply(int client_fd, Pack_match *pack_recv) {
+  static char send_buffer[BUFFER_SIZE];
+  char *p = send_buffer;
+
+  // '-' 重传
+  if (pack_recv == NULL) {
+    TCPSendLog("Send: %s", send_buffer);
+    send(client_fd, send_buffer, strlen(send_buffer), 0);
+    return;
+  }
+
+  p += sprintf(p, "+");
+
+  switch (pack_recv->str[0]) {
+  case 'q': {
+    const char *str = "Supported";
+    if (strncmp(pack_recv->str + 1, str, strlen(str)) == 0) {
+      generateReply("hwbreak", p);
+    } else {
+      generateReply("", p);
+    }
+    break;
+  }
+  case 'v': {
+    const char *str = "MustReplyEmpty";
+    if (strncmp(pack_recv->str + 1, str, strlen(str)) == 0) {
+      generateReply("", p);
+    } else {
+      generateReply("", p);
+    }
+    break;
+  }
+  default: {
+    generateReply("", p);
+    break;
+  }
+  }
+
+  TCPSendLog("Send: %s", send_buffer);
+  send(client_fd, send_buffer, strlen(send_buffer), 0);
+
+  free(pack_recv->str);
+  free(pack_recv);
+  return;
+}
 
 static void gdb_accept_loop(int client_fd) {
   char recv_buffer[BUFFER_SIZE];
@@ -30,10 +137,15 @@ static void gdb_accept_loop(int client_fd) {
       close(client_fd);
       break;
     } else {
+
       TCPRecvLog("Received: %s", recv_buffer);
-      const char *send_buffer = "+$#00";
-      TCPSendLog("Send: %s", send_buffer);
-      send(client_fd, send_buffer, recv_len, 0);
+
+      Pack_match *ma =
+          gdb_match(client_fd, (const char *)recv_buffer, recv_len);
+
+      if (ma != NULL) {
+        gdb_reply(client_fd, ma);
+      }
     }
   }
 }
