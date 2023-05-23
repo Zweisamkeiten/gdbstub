@@ -1,8 +1,10 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include "common.h"
+#include "gdbserver.h"
 
 int main(int argc, char *argv[]) {
+  if (gdbserver_start(DEFAULT_GDBSTUB_PORT) < 0) {
+    panic("gdbserver start fail");
+  };
 
-  printf("Hello, world!\n");
   return EXIT_SUCCESS;
 }

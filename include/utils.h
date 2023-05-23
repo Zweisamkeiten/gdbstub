@@ -32,4 +32,12 @@
     _Log(ANSI_FMT("[%s:%d %s] " format, ANSI_FG_BLUE) "\n", \
         __FILE__, __LINE__, __func__, ## __VA_ARGS__)
 
+#define TCPRecvLog(format, ...) \
+    _Log(ANSI_FMT("[%s:%d %s] " format, ANSI_FG_GREEN) "\n", \
+        __FILE__, __LINE__, __func__, ## __VA_ARGS__)
+
+#define TCPSendLog(format, ...) \
+    _Log(ANSI_FMT("[%s:%d %s] " format, ANSI_FG_MAGENTA) "\n", \
+        __FILE__, __LINE__, __func__, ## __VA_ARGS__)
+
 #endif
