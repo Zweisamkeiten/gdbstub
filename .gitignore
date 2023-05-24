@@ -57,3 +57,4 @@ bin/*
 
 compile_commands.json
 debug
+*.bin

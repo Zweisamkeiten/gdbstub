@@ -142,6 +142,8 @@ static void gdb_reply(int client_fd, Pack_match *pack_recv) {
       // 根据我们在这里的回答，我们在调用“退出”时会得到一个 kill 或 detach
       // 命令 想在退出 GDB 时让程序继续运行，所以是“1”
       generateReply("1", p);
+    } else if (CMP(pack_recv->str + 1, "Symbol::")) {
+      generateReply("OK", p);
     } else {
       generateReply("", p);
     }

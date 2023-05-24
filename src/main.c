@@ -2,6 +2,7 @@
 #include "gdbserver.h"
 
 CPU_State cpu;
+// BP bp;
 uint64_t bp_addr;
 bool cpu_stop = true;
 static uint8_t pmem[0x8000000] PG_ALIGN = {};
@@ -64,13 +65,32 @@ static const uint32_t img[] = {
     0xdeadbeef, // some data
 };
 
+static char *img_file = NULL;
+
 int main(int argc, char *argv[]) {
 
   cpu.pc = RESET_VECTOR;
 
   cpu.gpr[31] = 0x7fffffff;
 
-  memcpy(guest_to_host(RESET_VECTOR), img, sizeof(img));
+  if (argc > 1) {
+    img_file = argv[1];
+    FILE *fp = fopen(img_file, "rb");
+    Assert(fp, "Can not open '%s'", img_file);
+
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+
+    Log("The image is %s, size = %ld", img_file, size);
+
+    fseek(fp, 0, SEEK_SET);
+    int ret = fread(guest_to_host(RESET_VECTOR), size, 1, fp);
+    assert(ret == 1);
+
+    fclose(fp);
+  } else {
+    memcpy(guest_to_host(RESET_VECTOR), img, sizeof(img));
+  }
 
   if (gdbserver_start(DEFAULT_GDBSTUB_PORT) < 0) {
     panic("gdbserver start fail");
