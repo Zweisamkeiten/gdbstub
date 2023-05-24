@@ -2,6 +2,8 @@
 #include "gdbserver.h"
 
 CPU_State cpu;
+uint64_t bp_addr;
+bool cpu_stop = true;
 static uint8_t pmem[0x8000000] PG_ALIGN = {};
 uint8_t *guest_to_host(uint64_t paddr) { return pmem + paddr - CONFIG_MBASE; }
 

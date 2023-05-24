@@ -14,6 +14,9 @@
 extern void pmem_write(uint64_t addr, int len, uint64_t data);
 extern uint64_t pmem_read(uint64_t addr, int len);
 extern bool in_pmem(uint64_t addr);
+extern uint64_t bp_addr;
+extern bool cpu_stop;
+bool bp_trap = false;
 
 static bool gdb_accept_tcp(int gdb_fd);
 static int gdbserver_open_port(int port);
@@ -242,6 +245,55 @@ static void gdb_reply(int client_fd, Pack_match *pack_recv) {
     }
     break;
   }
+  case 'c': {
+    cpu_stop = false;
+    while (!cpu_stop) {
+      cpu.pc += 4;
+      if (cpu.pc == bp_addr) {
+        cpu_stop = true;
+        bp_trap = true;
+      }
+    }
+    generateReply("OK", p);
+    break;
+  }
+  case 'Z': {
+    typedef enum { SWBREAK, HWBREAK } bp_type;
+    char *pt = pack_recv->str + 1;
+    char *comm_p = strchr(pt, ',');
+    *comm_p = '\0';
+    char *comm_p2 = strchr(comm_p + 1, ',');
+    *comm_p2 = '\0';
+    bp_type type = atoi(pt);
+    // int kind = atoi(comm_p2 + 1);
+    switch (type) {
+    case SWBREAK:
+    case HWBREAK: {
+      bp_addr = hex_to_dec((uint8_t *)comm_p + 1);
+      // bp.addrs[bp.bp_nums++] = hex_to_dec((uint8_t *)comm_p + 1);
+    }
+    }
+    generateReply("OK", p);
+    break;
+  }
+  case 'z': {
+    typedef enum { SWBREAK, HWBREAK } bp_type;
+    char *pt = pack_recv->str + 1;
+    char *comm_p = strchr(pt, ',');
+    *comm_p = '\0';
+    char *comm_p2 = strchr(comm_p + 1, ',');
+    *comm_p2 = '\0';
+    bp_type type = atoi(pt);
+    // int kind = atoi(comm_p2 + 1);
+    switch (type) {
+    case SWBREAK:
+    case HWBREAK: {
+      bp_addr = 0;
+    }
+    }
+    generateReply("OK", p);
+    break;
+  }
   case '?': {
     generateReply("S05", p);
     break;
@@ -287,6 +339,14 @@ static void gdb_accept_loop(int client_fd) {
 
       if (ma != NULL) {
         gdb_reply(client_fd, ma);
+      }
+
+      if (cpu_stop && bp_trap) {
+        bp_trap = false;
+        char send_buffer[9];
+        const char *str = "S05";
+        generateReply(str, send_buffer);
+        send(client_fd, send_buffer, strlen(send_buffer), 0);
       }
     }
   }
