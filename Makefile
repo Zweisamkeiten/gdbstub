@@ -1,7 +1,7 @@
 # tool macros
-CC ?= gcc# FILL: the compiler
-CCFLAGS := -O2 -Wall -Werror -lreadline # FILL: compile flags
-DBGFLAGS := -g
+CC ?=  clang # FILL: the compiler
+CCFLAGS := -O2 -Wall -Werror -lreadline# FILL: compile flags
+DBGFLAGS := -g -fsanitize=address
 CCOBJFLAGS := -O2 -Wall -Werror $(CCOBJFLAGS) -c
 
 # path macros

@@ -11,6 +11,10 @@
 #define BUFFER_SIZE 1024
 #define CMP(ptr, str) strncmp((ptr), (str), strlen(str)) == 0
 
+extern void pmem_write(uint64_t addr, int len, uint64_t data);
+extern uint64_t pmem_read(uint64_t addr, int len);
+extern bool in_pmem(uint64_t addr);
+
 static bool gdb_accept_tcp(int gdb_fd);
 static int gdbserver_open_port(int port);
 static void gdb_accept_loop(int client_fd);
@@ -75,6 +79,37 @@ static void generateReply(const char *packet, char *reply) {
   sprintf(reply, "$%s#%02x", packet, checksum);
 }
 
+static uint8_t hex_nibble(uint8_t hex) {
+  return isdigit(hex) ? hex - '0' : tolower(hex) - 'a' + 10;
+}
+
+static uint16_t gdb_decode_hex(uint8_t msb, uint8_t lsb) {
+  if (!isxdigit(msb) || !isxdigit(lsb))
+    return UINT16_MAX;
+  return 16 * hex_nibble(msb) + hex_nibble(lsb);
+}
+
+static uint64_t gdb_decode_hex_str(uint8_t *bytes) {
+  uint64_t value = 0;
+  uint64_t weight = 1;
+  while (isxdigit(bytes[0]) && isxdigit(bytes[1])) {
+    value += weight * gdb_decode_hex(bytes[0], bytes[1]);
+    bytes += 2;
+    weight *= 16 * 16;
+  }
+  return value;
+}
+
+static uint64_t hex_to_dec(uint8_t *hex_str) {
+  uint8_t *p = hex_str;
+  uint64_t dec = 0;
+  while (*p != '\0') {
+    dec = dec * 16 + hex_nibble(*p);
+    p++;
+  }
+  return dec;
+}
+
 static void gdb_reply(int client_fd, Pack_match *pack_recv) {
   static char send_buffer[BUFFER_SIZE];
   char *p = send_buffer;
@@ -112,7 +147,7 @@ static void gdb_reply(int client_fd, Pack_match *pack_recv) {
   case 'v': {
     if (CMP(pack_recv->str + 1, "MustReplyEmpty")) {
       generateReply("", p);
-    } else {
+    } else if (CMP(pack_recv->str + 1, "Cont?")) {
       generateReply("", p);
     }
     break;
@@ -122,26 +157,89 @@ static void gdb_reply(int client_fd, Pack_match *pack_recv) {
       generateReply("", p);
     } else if (CMP(pack_recv->str + 1, "c-1")) {
       generateReply("", p);
+    } else if (CMP(pack_recv->str + 1, "c0")) {
+      generateReply("", p);
     }
     break;
   }
   case 'g': {
-
-    char regs[(32 + 1) * 16 + 1];
+    char regs[sizeof(CPU_State) / sizeof(uint64_t)];
     char *pt = regs;
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < sizeof(CPU_State) / sizeof(uint64_t); i++) {
       for (int j = 0; j < 8; j++) {
-        uint8_t hex = (cpu.gpr[i] >> (j * 8)) & 0xff;
+        uint8_t hex = (cpu.array[i] >> (j * 8)) & 0xff;
         pt += sprintf(pt, "%02x", hex);
       }
     }
 
-    for (int j = 0; j < 8; j++) {
-      uint8_t hex = (cpu.pc >> (j * 8)) & 0xff;
-      pt += sprintf(pt, "%02x", hex);
+    generateReply(regs, p);
+    break;
+  }
+  case 'G': {
+    uint8_t *pt = (uint8_t *)pack_recv->str + 1;
+
+    uint8_t c;
+    for (int i = 0; i < sizeof(CPU_State) / sizeof(uint64_t); i++) {
+      c = pt[16];
+      pt[16] = '\0';
+      cpu.array[i] = gdb_decode_hex_str(pt);
+      pt[16] = c;
+      pt += 16;
     }
 
-    generateReply(regs, p);
+    generateReply("OK", p);
+    break;
+  }
+  case 'P': {
+    char *pt = pack_recv->str + 1;
+    char *equal_p = strchr(pt, '=');
+    *equal_p = '\0';
+    uint8_t reg_to_write = hex_to_dec((uint8_t *)pt);
+    cpu.array[reg_to_write] = gdb_decode_hex_str((uint8_t *)equal_p + 1);
+    *equal_p = '=';
+    generateReply("OK", p);
+    break;
+  }
+  case 'm': {
+    char *pt = pack_recv->str + 1;
+    char *comm_p = strchr(pt, ',');
+    *comm_p = '\0';
+    uint64_t raddr = hex_to_dec((uint8_t *)pt);
+    uint64_t length = atoi(comm_p + 1);
+    if (in_pmem(raddr)) {
+      char tmp[length * 2 + 1];
+      for (int i = 0; i < length; i++) {
+        sprintf(tmp + 2 * i, "%02x", (uint8_t)pmem_read(raddr + i, 1));
+      }
+      generateReply(tmp, p);
+    } else {
+      generateReply("", p);
+    }
+    break;
+  }
+  case 'M': {
+    char *pt = pack_recv->str + 1;
+    char *comm_p = strchr(pt, ',');
+    *comm_p = '\0';
+    uint64_t waddr = hex_to_dec((uint8_t *)pt);
+    char *colon_p = strchr(comm_p + 1, ':');
+    *colon_p = '\0';
+    uint64_t length = atoi(comm_p + 1);
+
+    char *data_str = colon_p + 1;
+    if (in_pmem(waddr)) {
+      uint8_t c;
+      for (int i = 0; i < length; i++) {
+        c = data_str[2];
+        data_str[2] = '\0';
+        pmem_write(waddr + i, 1, gdb_decode_hex_str((uint8_t *)data_str));
+        data_str[2] = c;
+        data_str += 2;
+      }
+      generateReply("OK", p);
+    } else {
+      generateReply("", p);
+    }
     break;
   }
   case '?': {

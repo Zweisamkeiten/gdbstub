@@ -1,0 +1,3 @@
+set $x1 = 0x4
+set {unsigned long int} (0x80001000 +  1*8) = $x1
+x 0x80001000 + 8
