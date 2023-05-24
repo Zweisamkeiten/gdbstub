@@ -9,6 +9,7 @@
 #include "gdbserver.h"
 
 #define BUFFER_SIZE 1024
+#define CMP(ptr, str) strncmp((ptr), (str), strlen(str)) == 0
 
 static bool gdb_accept_tcp(int gdb_fd);
 static int gdbserver_open_port(int port);
@@ -17,6 +18,8 @@ static unsigned char computeChecksum(const char *packet);
 static void gdb_reply(int client_fd, Pack_match *pack_recv);
 
 typedef void (*handle)(void *params);
+
+extern CPU_State cpu;
 
 static unsigned char computeChecksum(const char *packet) {
   size_t len = strlen(packet);
@@ -87,21 +90,62 @@ static void gdb_reply(int client_fd, Pack_match *pack_recv) {
 
   switch (pack_recv->str[0]) {
   case 'q': {
-    const char *str = "Supported";
-    if (strncmp(pack_recv->str + 1, str, strlen(str)) == 0) {
-      generateReply("hwbreak", p);
+    if (CMP(pack_recv->str + 1, "Supported")) {
+      generateReply("hwbreak+", p);
+    } else if (CMP(pack_recv->str + 1, "fThreadInfo")) {
+      generateReply("", p);
+    } else if (CMP(pack_recv->str + 1, "L")) {
+      generateReply("", p);
+    } else if (CMP(pack_recv->str + 1, "C")) {
+      generateReply("", p);
+    } else if (CMP(pack_recv->str + 1, "Attached")) {
+      // 必须响应“1”，表示我们的远程服务器已附加到现有进程
+      // 或者带有“0”表示远程服务器自己创建了一个新进程
+      // 根据我们在这里的回答，我们在调用“退出”时会得到一个 kill 或 detach
+      // 命令 想在退出 GDB 时让程序继续运行，所以是“1”
+      generateReply("1", p);
     } else {
       generateReply("", p);
     }
     break;
   }
   case 'v': {
-    const char *str = "MustReplyEmpty";
-    if (strncmp(pack_recv->str + 1, str, strlen(str)) == 0) {
+    if (CMP(pack_recv->str + 1, "MustReplyEmpty")) {
       generateReply("", p);
     } else {
       generateReply("", p);
     }
+    break;
+  }
+  case 'H': {
+    if (CMP(pack_recv->str + 1, "g0")) {
+      generateReply("", p);
+    } else if (CMP(pack_recv->str + 1, "c-1")) {
+      generateReply("", p);
+    }
+    break;
+  }
+  case 'g': {
+
+    char regs[(32 + 1) * 16 + 1];
+    char *pt = regs;
+    for (int i = 0; i < 32; i++) {
+      for (int j = 0; j < 8; j++) {
+        uint8_t hex = (cpu.gpr[i] >> (j * 8)) & 0xff;
+        pt += sprintf(pt, "%02x", hex);
+      }
+    }
+
+    for (int j = 0; j < 8; j++) {
+      uint8_t hex = (cpu.pc >> (j * 8)) & 0xff;
+      pt += sprintf(pt, "%02x", hex);
+    }
+
+    generateReply(regs, p);
+    break;
+  }
+  case '?': {
+    generateReply("S05", p);
     break;
   }
   default: {

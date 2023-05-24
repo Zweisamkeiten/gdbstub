@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,5 +22,12 @@
   } while (0)
 
 #define panic(format, ...) Assert(0, format, ##__VA_ARGS__)
+
+typedef struct {
+  uint64_t gpr[32];
+  uint64_t pc;
+} CPU_State;
+
+#define RESET_VECTOR 0x80000000
 
 #endif
