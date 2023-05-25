@@ -168,7 +168,7 @@ static void gdb_reply(int client_fd, Pack_match *pack_recv) {
     break;
   }
   case 'g': {
-    char regs[sizeof(CPU_State) / sizeof(uint64_t)];
+    char regs[16 * (sizeof(CPU_State) / sizeof(uint64_t)) + 1];
     char *pt = regs;
     for (int i = 0; i < sizeof(CPU_State) / sizeof(uint64_t); i++) {
       for (int j = 0; j < 8; j++) {
